@@ -1,0 +1,23 @@
+{
+    "ProjectSrcRoot":"src/",
+    "Languages":{
+        "cpp":{
+            "cxx": "toolchain/i686-elf/bin/i686-elf-gcc",
+            "ld": "toolchain/i686-elf/bin/i686-elf-ld"
+        },
+        "c":{
+            "cc": "toolchain/i686-elf/bin/i686-elf-gcc",
+            "ld": "toolchain/i686-elf/bin/i686-elf-gcc"
+        },
+        "asm":{
+            "assembler":"nasm"
+        }
+    },
+    "PathSpecificFlags":{
+        "cpp":{
+            "stage1": {
+                "asm":"-DFILESYSTEM=3"
+            }
+        }
+    }
+}
