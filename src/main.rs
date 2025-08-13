@@ -1,145 +1,23 @@
 use std::collections::HashMap;
 use std::env;
-use std::fs::{self, File};
-use std::io::BufReader;
 use std::path::Path;
 use std::process::exit;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct CppLanguage{
-    cxx: String,
-    ld: String
-}
-
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct CLanguage{
-    cc: String,
-    ld: String
-}
-
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct AsmLanguage{
-    assembler: String
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct Languages{
-    cpp: CppLanguage,
-    c: CLanguage,
-    asm: AsmLanguage
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct StageFiles{
-    asm: String
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct CppFlags{
-    stage1: StageFiles
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct PathSpecificFlags{
-    cpp: CppFlags
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct Config {
-    #[serde(rename= "ProjectSrcRoot")]
-    project_src_root: String,
-    #[serde(rename= "Languages")]
-    languages: Languages,
-    #[serde(rename= "PathSpecificFlags")]
-    path_specific_flags: PathSpecificFlags,
-}
-
-#[derive(Debug)]
-struct SourceFile {
-    path: String,
-    extension: String,
-    file_type: FileType,
-}
-
-#[derive(Debug)]
-enum FileType {
-    CPlusPlus,
-    C,
-    Assembly,
-    Header,
-    Unknown,
-}
-
-
-fn read_config_file(config_path: &Path) -> Result<Config, Box<dyn std::error::Error>> {
-    println!("Config file exists: {}", config_path.exists());
-    
-    let file = File::open(config_path)?;
-    let reader = BufReader::new(file);
-    
-    let config: Config = serde_json::from_reader(reader)?;
-    
-    Ok(config)
-}
-
-fn read_directory(path: &str) -> Result<Vec<SourceFile>, Box<dyn std::error::Error>> {
-    println!("Reading directory: {}", path);
-    
-    let mut source_files = Vec::new();
-    
-    // Recursively walk through directory
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let path = entry.path();
-        
-        if path.is_file() {
-            if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-                let file_type = match extension {
-                    "cpp" | "cxx" | "cc" => FileType::CPlusPlus,
-                    "c" => FileType::C,
-                    "asm" | "s" => FileType::Assembly,
-                    "h" | "hpp" => FileType::Header,
-                    _ => FileType::Unknown,
-                };
-                
-                // Only include source files we care about
-                if !matches!(file_type, FileType::Unknown) {
-                    let source_file = SourceFile {
-                        path: path.to_string_lossy().to_string(),
-                        extension: extension.to_string(),
-                        file_type,
-                    };
-                    
-                    println!("Found source file: {:?}", source_file);
-                    source_files.push(source_file);
-                }
-            }
-        } else if path.is_dir() {
-            // Recursively read subdirectories
-            let subdir_path = path.to_string_lossy();
-            let mut subdir_files = read_directory(&subdir_path)?;
-            source_files.append(&mut subdir_files);
-        }
-    }
-    
-    Ok(source_files)
-}
+mod file_organizer;
+mod directory_manager;
 
 fn main() {
-
     let args: Vec<String> = env::args().collect();
-    let configuration_file_path:&str = if args.len() > 1 && args[1].eq("--config-file"){
+    let configuration_file_path: &str = if args.len() > 1 && args[1].eq("--config-file") {
         &args[2]
-    }else {
+    } else {
         println!("USAGE: --config-file [filepath]");
         exit(-1);
     };
 
     let config_file_path = Path::new(configuration_file_path);
     if config_file_path.exists() {
-        match read_config_file(config_file_path){
+        match directory_manager::read_config_file(config_file_path) {
             Ok(config) => {
                 println!("ProjectSrcRoot: {}", config.project_src_root);
                 println!("C++ Compiler: {}", config.languages.cpp.cxx);
@@ -147,18 +25,108 @@ fn main() {
                 println!("Assembler: {}", config.languages.asm.assembler);
                 println!("Full config: {:#?}", config);
                 println!("Looking for directory: {}", config.project_src_root);
-                println!("Full path: {:?}", std::path::Path::new(&config.project_src_root).canonicalize().unwrap());
+                println!(
+                    "Full path: {:?}",
+                    std::path::Path::new(&config.project_src_root)
+                        .canonicalize()
+                        .unwrap()
+                );
 
-                let proj_src_root = std::path::Path::new(&config.project_src_root).canonicalize().unwrap();
+                let proj_src_root = std::path::Path::new(&config.project_src_root)
+                    .canonicalize()
+                    .unwrap();
+                let proj_src_root_str = proj_src_root
+                    .to_str()
+                    .unwrap()
+                    .strip_prefix(r"\\?\")
+                    .unwrap_or_else(|| proj_src_root.to_str().unwrap());
+                match directory_manager::read_directory(&proj_src_root_str) {
+                    Ok(organized_files) => {
+                        let mut file_list: HashMap<String, directory_manager::DirectoryFile> = HashMap::new();
 
-                match read_directory(&proj_src_root.to_str().unwrap()) {
-                    Ok(files) => {
-                        println!("\nFound {} source files:", files.len());
-                        for file in files {
-                            println!("  Path: {}", file.path);
-                            println!("    Type: {:?}", file.file_type);
-                            println!("    Extension: {}", file.extension);
+                        for (folder, files) in &organized_files.by_folder {
+                            let mut folder_sources_list: directory_manager::DirectoryFile =
+                                directory_manager::DirectoryFile { files: Vec::new() };
+                            let mut i = 0;
+                            for file in files {
+                                folder_sources_list.files.insert(i, file.clone().to_owned());
+                                i += 1;
+                            }
+                            file_list.insert(folder.to_owned(), folder_sources_list);
                         }
+
+                        println!("\nSubdivided in {} keys:", file_list.len());
+                        println!("\nKeys:");
+                        for key in file_list.keys() {
+                            let relative = Path::new(key)
+                                .strip_prefix(&proj_src_root_str)
+                                .unwrap_or_else(|_| Path::new(key)); // fallback to full path if no match
+
+                            println!("  -   {}", relative.to_str().unwrap())
+                        }
+                        println!(
+                            "Seaching for Stage1 at {}",
+                            format!("{}", &format!("{:?}\\boot\\stage1", proj_src_root_str))
+                        );
+
+                        let mut linker_script_stage1: Option<file_organizer::SourceFile> = None;
+                        let mut linker_script_stage2: Option<file_organizer::SourceFile> = None;
+                        let mut sources_stage2: Option<Vec<file_organizer::SourceFile>> = None;
+                        let mut sources_stage1: Option<Vec<file_organizer::SourceFile>> = None;
+
+                        for (folder, files) in file_list {
+                            if folder.eq(&format!("{}\\boot\\stage1", proj_src_root_str)) {
+                                let mut sources_internal: Vec<file_organizer::SourceFile> = Vec::new();
+                                let i = 0;
+                                for source in files.files {
+                                    sources_internal.insert(i, source);
+                                }
+                                sources_stage1 = Some(sources_internal.clone());
+                                for source in sources_internal {
+                                    if source.file_type == file_organizer::FileType::Linker {
+                                        linker_script_stage1 = Some(source.clone());
+                                    }
+                                }
+                            } else if folder.eq(&format!("{}\\boot\\stage2", proj_src_root_str)) {
+                                println!(
+                                    "Seaching for Stage2 at {}",
+                                    format!(
+                                        "{}",
+                                        &format!("{:?}\\boot\\stage2", proj_src_root_str)
+                                    )
+                                );
+                                let mut sources_internal: Vec<file_organizer::SourceFile> = Vec::new();
+                                let i = 0;
+                                for source in files.files {
+                                    sources_internal.insert(i, source);
+                                }
+
+                                sources_stage2 = Some(sources_internal.clone());
+
+                                for source in sources_internal {
+                                    if source.file_type == file_organizer::FileType::Linker {
+                                        linker_script_stage2 = Some(source.clone());
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(unwrap_lnkscript1) = linker_script_stage1 {
+                            println!("Linker script stage 1: {:?}", unwrap_lnkscript1.path);
+                        } else {
+                            eprintln!("Linker script for stage 1 not found!");
+                            exit(1);
+                        }
+
+                        if let Some(unwrap_lnkscript2) = linker_script_stage2 {
+                            println!("Linker script stage 2: {:?}", unwrap_lnkscript2.path);
+                        } else {
+                            eprintln!("Linker script for stage 2 not found!");
+                            exit(1);
+                        }
+
+                        println!("Found {} sources for stage1", sources_stage1.unwrap().len());
+                        println!("Found {} sources for stage2", sources_stage2.unwrap().len());
                     }
                     Err(e) => {
                         eprintln!("Error reading source directory: {}", e);
@@ -175,5 +143,4 @@ fn main() {
         eprintln!("Config file does not exist: {}", configuration_file_path);
         exit(1);
     }
-
 }
