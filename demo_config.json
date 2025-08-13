@@ -1,5 +1,5 @@
 {
-    "ProjectSrcRoot":"src/",
+    "ProjectSrcRoot":"src_demo/",
     "Languages":{
         "cpp":{
             "cxx": "toolchain/i686-elf/bin/i686-elf-gcc",
@@ -16,7 +16,11 @@
     "PathSpecificFlags":{
         "cpp":{
             "stage1": {
-                "asm":"-DFILESYSTEM=3"
+                "asm": "-DFILESYSTEM=3"
+            },
+            "stage2": {
+                "asm": "",
+                "cc": ""
             }
         }
     }
