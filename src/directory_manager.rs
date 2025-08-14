@@ -13,7 +13,7 @@ pub fn read_config_file(config_path: &Path) -> Result<file_organizer::Config, Bo
 
     Ok(config)
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DirectoryFile {
     pub files: Vec<file_organizer::SourceFile>,
 }
