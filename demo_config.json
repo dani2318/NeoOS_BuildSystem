@@ -19,7 +19,7 @@
                 "asm": "-DFILESYSTEM=3"
             },
             "stage2": {
-                "asm": "",
+                "asm": "-I.",
                 "cc": ""
             }
         }
